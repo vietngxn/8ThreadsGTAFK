@@ -1,5 +1,5 @@
 """
-Ghi âm âm thanh GTA V (qua VB-Cable), nhận diện lời thoại raid của LJT
+Ghi âm âm thanh GTA V (qua VB-Cable), nhận diện tiếng chuông điện thoại trong game
 bằng cách so khớp với mẫu bạn tự thu, và gửi cảnh báo qua Telegram.
 """
 import json
@@ -24,8 +24,7 @@ BLOCK = SR // 10  # 0,1 giây / khối
 DATA_DIR = os.path.join(os.environ.get("APPDATA", "."), "GTAEco")
 CLIPS_DIR = os.path.join(DATA_DIR, "clips")
 SAMPLES_DIR = os.path.join(DATA_DIR, "samples")
-RAID_TYPES = ["CopRaid", "GangRaid", "Traitor", "StolenProduct",
-              "FakeCash", "StolenCrystals", "Khac"]
+RAID_TYPES = ["Chuong"]  # chỉ nhận diện tiếng chuông điện thoại
 
 
 # ---------------------------------------------------------------- Telegram
@@ -153,7 +152,7 @@ class Recorder(threading.Thread):
     def load_templates(self):
         self.templates = []
         for f in sorted(os.listdir(SAMPLES_DIR)):
-            if f.endswith(".wav"):
+            if f.endswith(".wav") and f.split("_")[0] in RAID_TYPES:
                 feat = features(read_wav(os.path.join(SAMPLES_DIR, f)))
                 if len(feat) >= 20:
                     self.templates.append((f.split("_")[0], feat))
@@ -249,7 +248,7 @@ class Recorder(threading.Thread):
         self.seg, self.silence = [], 0
         if trail:
             blocks = blocks[:-trail]
-        if len(blocks) < 5:  # ngắn hơn 0,5 giây thì bỏ
+        if len(blocks) < 3:  # ngắn hơn 0,3 giây thì bỏ
             return
         audio = np.concatenate(blocks)
         name = time.strftime("%Y%m%d_%H%M%S") + ".wav"
@@ -268,8 +267,8 @@ class Recorder(threading.Thread):
             if s > best:
                 label, best = lb, s
         if best >= 0.4:
-            self.log(f"{name}: giống '{label}' {best:.2f}")
-        if best >= self.cfg["match_threshold"] and time.time() - self.last_alert.get(label, 0) > 300:
+            self.log(f"{name}: giống tiếng chuông {best:.2f}")
+        if best >= self.cfg["match_threshold"] and time.time() - self.last_alert.get(label, 0) > 60:
             self.last_alert[label] = time.time()
             self.on_raid(label, best)
 
