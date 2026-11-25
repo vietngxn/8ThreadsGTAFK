@@ -372,7 +372,7 @@ class App:
         nb.pack(fill="both", expand=True)
         r, t2 = ttk.Frame(nb), ttk.Frame(nb)
         nb.add(r, text="Treo máy")
-        nb.add(t2, text="Cảnh báo raid")
+        nb.add(t2, text="Chuông điện thoại")
         self.build_raid_tab(t2)
         pad = {"padx": 12, "pady": 4}
 
@@ -577,7 +577,7 @@ class App:
         ttk.Button(row, text="Gửi thử", command=self.tg_test).pack(side="left", padx=6)
         self.v_nraid = tk.BooleanVar(value=cfg["notify_raid"])
         self.v_nclosed = tk.BooleanVar(value=cfg["notify_closed"])
-        ttk.Checkbutton(f, text="Báo khi nghi có raid", variable=self.v_nraid,
+        ttk.Checkbutton(f, text="Báo khi có chuông điện thoại trong game", variable=self.v_nraid,
                         command=self.sync_raid).grid(row=3, column=0, columnspan=2, sticky="w", padx=8)
         ttk.Checkbutton(f, text="Báo khi game đóng/crash hoặc hết giờ hẹn", variable=self.v_nclosed,
                         command=self.sync_raid).grid(row=4, column=0, columnspan=2, sticky="w", padx=8)
@@ -589,7 +589,7 @@ class App:
         fa = ttk.LabelFrame(t, text="Âm thanh game (qua VB-Cable)")
         fa.pack(fill="x", **pad)
         self.v_rec = tk.BooleanVar(value=cfg["rec_enabled"])
-        ttk.Checkbutton(fa, text="Ghi âm & nhận diện raid khi bật chế độ treo máy",
+        ttk.Checkbutton(fa, text="Nghe tiếng chuông điện thoại khi bật chế độ treo máy",
                         variable=self.v_rec, command=self.sync_raid).pack(anchor="w", padx=8, pady=2)
         row = ttk.Frame(fa)
         row.pack(fill="x", padx=8, pady=2)
@@ -630,7 +630,7 @@ class App:
         self.rec_var = tk.StringVar()
         ttk.Label(fa, textvariable=self.rec_var, foreground="gray").pack(anchor="w", padx=8, pady=(0, 4))
 
-        fc = ttk.LabelFrame(t, text="Đoạn đã ghi → chọn đoạn lời thoại raid làm mẫu")
+        fc = ttk.LabelFrame(t, text="Đoạn đã ghi → chọn đoạn tiếng chuông làm mẫu")
         fc.pack(fill="both", expand=True, **pad)
         self.lb = tk.Listbox(fc, height=6, exportselection=False)
         self.lb.pack(fill="both", expand=True, padx=8, pady=4)
@@ -638,10 +638,9 @@ class App:
         row.pack(fill="x", padx=8, pady=2)
         ttk.Button(row, text="Nghe thử", command=self.clip_play).pack(side="left")
         ttk.Button(row, text="Xóa", command=self.clip_delete).pack(side="left", padx=6)
-        self.v_rtype = tk.StringVar(value=raid_alert.RAID_TYPES[0])
-        ttk.Combobox(row, textvariable=self.v_rtype, values=raid_alert.RAID_TYPES,
-                     state="readonly", width=15).pack(side="left", padx=(12, 4))
-        ttk.Button(row, text="Đặt làm mẫu", command=self.clip_sample).pack(side="left")
+        self.v_rtype = tk.StringVar(value="Chuong")
+        ttk.Button(row, text="Đặt làm mẫu chuông", command=self.clip_sample
+                   ).pack(side="left", padx=(12, 0))
         row = ttk.Frame(fc)
         row.pack(fill="x", padx=8, pady=(2, 6))
         self.v_samples = tk.StringVar()
@@ -679,11 +678,11 @@ class App:
         threading.Thread(target=work, daemon=True).start()
 
     def on_raid(self, label, score):
-        self.log(f"🚨 Nghi có raid: {label} (độ khớp {score:.2f})")
+        self.log(f"📞 Có chuông điện thoại trong game (độ khớp {score:.2f})")
         if self.cfg["notify_raid"]:
-            self.notify(f"🚨 NGHI CÓ RAID: {label} (độ khớp {score:.2f})\nVào game xử lý sớm.")
+            self.notify(f"📞 GTA có cuộc gọi đến (tiếng chuông, độ khớp {score:.2f})\nVào game kiểm tra.")
         try:
-            self.tray.notify(f"Nghi có raid: {label}", "GTA Eco")
+            self.tray.notify("Có chuông điện thoại trong game", "GTA Eco")
         except Exception:
             pass
 
@@ -745,7 +744,7 @@ class App:
         if p:
             self.rec.make_sample(p, self.v_rtype.get())
             self.refresh_clips()
-            self.log(f"Đã đặt làm mẫu '{self.v_rtype.get()}'.")
+            self.log("Đã đặt làm mẫu tiếng chuông.")
 
     def reload_samples(self):
         self.rec.load_templates()
