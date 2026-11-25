@@ -23,7 +23,7 @@ try:
 except ImportError:  # không phải Windows
     winreg = None
 
-APP_NAME = "GTAEco"
+APP_NAME = "8Threads GTAFK"
 GAME_NAMES = ("GTA5.exe", "GTA5_Enhanced.exe")
 CFG_DIR = os.path.join(os.environ.get("APPDATA", "."), APP_NAME)
 CFG_FILE = os.path.join(CFG_DIR, "config.json")
@@ -346,7 +346,7 @@ class App:
     def __init__(self):
         self.cfg = load_cfg()
         self.root = tk.Tk()
-        self.root.title("GTA Eco – Treo máy tiết kiệm tài nguyên")
+        self.root.title("8Threads GTAFK – Tool hỗ trợ treo máy GTA V Online by 8Threads")
         self.root.geometry("560x840")
         self.root.resizable(False, False)
         self.engine = Engine(self.cfg, self.log)
