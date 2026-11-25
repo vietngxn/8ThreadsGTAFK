@@ -16,8 +16,6 @@ from tkinter import ttk
 import psutil
 import pystray
 from PIL import Image, ImageDraw
-from collections import Counter
-
 import raid_alert
 
 try:
@@ -354,7 +352,7 @@ class App:
         self.engine = Engine(self.cfg, self.log)
         self.engine.notify = self.notify
         self.rec = raid_alert.Recorder(self.cfg, self.log, self.on_raid,
-                                       lambda: self.root.after(0, self.refresh_clips))
+                                       lambda: None)
         self.build_ui()
         self.engine.start()
         self.rec.start()
@@ -523,6 +521,9 @@ class App:
     def refresh(self):
         e = self.engine
         self.pb_level["value"] = min(self.rec.level / 0.1, 1.0) * 100
+        n = len(self.rec.templates)
+        self.v_samples.set(f"Tiếng chuông đã nạp sẵn: {n} file" if n else
+                           "⚠ Chưa có file chuông trong thư mục ringtone/ – chưa thể cảnh báo")
         self.rec_var.set("● Đang nghe âm thanh game" if self.rec.stream is not None
                          else "○ Không ghi (bật chế độ treo máy để ghi)")
         on = self.cfg["enabled"]
@@ -612,14 +613,6 @@ class App:
             ttk.Label(row, text=text, width=30).pack(side="left")
             ttk.Scale(row, from_=lo, to=hi, variable=var, command=self.sync_raid,
                       length=200).pack(side="left")
-        row = ttk.Frame(fa)
-        row.pack(fill="x", padx=8, pady=2)
-        ttk.Label(row, text="Giữ file ghi (ngày):").pack(side="left")
-        self.v_keep = tk.IntVar(value=cfg["keep_days"])
-        sp = ttk.Spinbox(row, from_=1, to=30, width=4, textvariable=self.v_keep,
-                         command=self.sync_raid)
-        sp.pack(side="left", padx=6)
-        sp.bind("<KeyRelease>", self.sync_raid)
 
         row = ttk.Frame(fa)
         row.pack(fill="x", padx=8, pady=(4, 6))
@@ -628,27 +621,10 @@ class App:
         ttk.Button(row, text="Kiểm tra mức âm (10 giây)", command=self.test_audio
                    ).pack(side="left", padx=8)
         self.rec_var = tk.StringVar()
-        ttk.Label(fa, textvariable=self.rec_var, foreground="gray").pack(anchor="w", padx=8, pady=(0, 4))
-
-        fc = ttk.LabelFrame(t, text="Đoạn đã ghi → chọn đoạn tiếng chuông làm mẫu")
-        fc.pack(fill="both", expand=True, **pad)
-        self.lb = tk.Listbox(fc, height=6, exportselection=False)
-        self.lb.pack(fill="both", expand=True, padx=8, pady=4)
-        row = ttk.Frame(fc)
-        row.pack(fill="x", padx=8, pady=2)
-        ttk.Button(row, text="Nghe thử", command=self.clip_play).pack(side="left")
-        ttk.Button(row, text="Xóa", command=self.clip_delete).pack(side="left", padx=6)
-        self.v_rtype = tk.StringVar(value="Chuong")
-        ttk.Button(row, text="Đặt làm mẫu chuông", command=self.clip_sample
-                   ).pack(side="left", padx=(12, 0))
-        row = ttk.Frame(fc)
-        row.pack(fill="x", padx=8, pady=(2, 6))
+        ttk.Label(fa, textvariable=self.rec_var, foreground="gray").pack(anchor="w", padx=8)
         self.v_samples = tk.StringVar()
-        ttk.Label(row, textvariable=self.v_samples).pack(side="left")
-        ttk.Button(row, text="Mở thư mục mẫu", command=lambda: os.startfile(raid_alert.SAMPLES_DIR)
-                   ).pack(side="right")
-        ttk.Button(row, text="Nạp lại mẫu", command=self.reload_samples).pack(side="right", padx=6)
-        self.refresh_clips()
+        ttk.Label(fa, textvariable=self.v_samples, foreground="gray").pack(anchor="w", padx=8, pady=(0, 6))
+
 
     def sync_raid(self, *_):
         c = self.cfg
@@ -661,7 +637,6 @@ class App:
             c["audio_device"] = self.v_dev.get().strip()
             c["audio_threshold"] = round(self.v_thr.get(), 4)
             c["match_threshold"] = round(self.v_match.get(), 2)
-            c["keep_days"] = max(1, self.v_keep.get())
         except tk.TclError:
             return
         save_cfg(c)
@@ -714,41 +689,6 @@ class App:
     def test_audio(self):
         self.rec.test_until = time.time() + 10
         self.log("Đang nghe 10 giây – hãy cho game phát tiếng và xem thanh mức âm.")
-
-    def refresh_clips(self):
-        self.clip_paths = raid_alert.list_clips()
-        self.lb.delete(0, "end")
-        for p in self.clip_paths:
-            dur = max(0, (os.path.getsize(p) - 44) / 2 / raid_alert.SR)
-            self.lb.insert("end", f"{os.path.basename(p)[:-4]}    ({dur:.1f} giây)")
-        cnt = Counter(lb for lb, _ in self.rec.templates)
-        self.v_samples.set("Mẫu: " + (", ".join(f"{k}×{v}" for k, v in cnt.items()) or "chưa có"))
-
-    def sel_clip(self):
-        s = self.lb.curselection()
-        return self.clip_paths[s[0]] if s else None
-
-    def clip_play(self):
-        p = self.sel_clip()
-        if p:
-            os.startfile(p)
-
-    def clip_delete(self):
-        p = self.sel_clip()
-        if p:
-            os.remove(p)
-            self.refresh_clips()
-
-    def clip_sample(self):
-        p = self.sel_clip()
-        if p:
-            self.rec.make_sample(p, self.v_rtype.get())
-            self.refresh_clips()
-            self.log("Đã đặt làm mẫu tiếng chuông.")
-
-    def reload_samples(self):
-        self.rec.load_templates()
-        self.refresh_clips()
 
     # ---- khay hệ thống
     def setup_tray(self):

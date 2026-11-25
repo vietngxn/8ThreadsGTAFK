@@ -3,3 +3,4 @@ pystray
 pillow
 numpy
 sounddevice
+soundfile

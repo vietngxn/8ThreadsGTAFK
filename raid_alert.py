@@ -1,11 +1,13 @@
 """
-Ghi âm âm thanh GTA V (qua VB-Cable), nhận diện tiếng chuông điện thoại trong game
-bằng cách so khớp với mẫu bạn tự thu, và gửi cảnh báo qua Telegram.
+Nghe âm thanh GTA V (qua VB-Cable), nhận diện tiếng chuông điện thoại trong game
+bằng cách so khớp với file chuông đóng gói sẵn, và gửi cảnh báo qua Telegram.
+Không lưu âm thanh ra đĩa.
 """
+import collections
 import json
 import os
 import queue
-import shutil
+import sys
 import threading
 import time
 import urllib.parse
@@ -18,6 +20,10 @@ try:
     import sounddevice as sd
 except Exception:  # thiếu thư viện hoặc PortAudio
     sd = None
+try:
+    import soundfile as sf
+except Exception:
+    sf = None
 
 SR = 16000
 BLOCK = SR // 10  # 0,1 giây / khối
@@ -69,6 +75,65 @@ def read_wav(path):
         return np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype("float32") / 32768
 
 
+def app_dir():
+    return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+
+
+def load_any(path):
+    """Đọc wav/ogg/flac/mp3 → (mono float32, tần số lấy mẫu)."""
+    if sf is not None:
+        data, rate = sf.read(path, dtype="float32", always_2d=True)
+        return data.mean(1), rate
+    with wave.open(path, "rb") as w:
+        if w.getsampwidth() != 2:
+            raise ValueError("Cần cài soundfile để đọc định dạng này (pip install soundfile).")
+        rate, ch = w.getframerate(), w.getnchannels()
+        data = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype("float32") / 32768
+    return data.reshape(-1, ch).mean(1), rate
+
+
+def to_template(x, rate, max_secs=2.0):
+    """Đưa file chuông về mono 16 kHz, cắt khoảng lặng hai đầu, giữ tối đa 2 giây."""
+    if rate != SR:
+        k = int(round(rate / SR))
+        if k > 1:  # lọc thông thấp đơn giản trước khi giảm tần số lấy mẫu
+            x = np.convolve(x, np.ones(k, dtype="float32") / k, mode="same")
+        n_out = int(len(x) * SR / rate)
+        x = np.interp(np.linspace(0, len(x) - 1, n_out), np.arange(len(x)), x).astype("float32")
+    peak = float(np.abs(x).max()) if len(x) else 0.0
+    nz = np.flatnonzero(np.abs(x) > 0.02 * peak) if peak > 0 else []
+    if len(nz) == 0:
+        raise ValueError("File im lặng")
+    x = x[nz[0]:nz[-1] + 1][: int(max_secs * SR)]
+    if len(x) < int(0.3 * SR):
+        raise ValueError("File quá ngắn (cần ít nhất 0,3 giây có tiếng)")
+    return x
+
+
+AUDIO_EXT = (".wav", ".ogg", ".flac", ".mp3")
+
+
+def load_bundled(log=print):
+    """Nạp mọi file chuông trong thư mục ringtone/ (cạnh app hoặc trong %APPDATA%\\GTAEco)."""
+    feats = []
+    for folder in dict.fromkeys([os.path.join(app_dir(), "ringtone"),
+                                 os.path.join(DATA_DIR, "ringtone")]):
+        if not os.path.isdir(folder):
+            continue
+        for f in sorted(os.listdir(folder)):
+            if not f.lower().endswith(AUDIO_EXT):
+                continue
+            try:
+                x, rate = load_any(os.path.join(folder, f))
+                feat = features(to_template(x, rate))
+                if len(feat) >= 20:
+                    feats.append(feat)
+                    log(f"Đã nạp tiếng chuông: {f}")
+            except Exception as e:
+                log(f"Không nạp được {f}: {e}")
+    return feats
+
+
 def list_inputs():
     if sd is None:
         return []
@@ -109,16 +174,18 @@ def features(x):
     spec = np.abs(np.fft.rfft(frames * np.hanning(n_fft), axis=1)) ** 2
     edges = np.unique(np.geomspace(3, 256, 25).astype(int))
     bands = np.stack([spec[:, a:b].sum(1) for a, b in zip(edges[:-1], edges[1:])], 1)
-    return np.log(bands + 1e-9)
+    # sàn tương đối theo đỉnh của đoạn: bỏ qua khác biệt tiếng ồn nền và độ to
+    return np.log(bands + 1e-3 * bands.max() + 1e-12)
 
 
 def best_score(A, T):
     """Độ giống lớn nhất (cosine) khi trượt mẫu T dọc theo đoạn A."""
     tn = len(T)
-    if tn == 0 or len(A) == 0:
+    if tn == 0 or len(A) < 0.6 * tn:  # đoạn quá ngắn so với mẫu thì không đủ căn cứ
         return 0.0
-    if len(A) < tn:
-        A = np.vstack([A, np.zeros((tn - len(A), A.shape[1]))])
+    if len(A) < tn:  # đoạn bị cắt hụt mép: trượt đoạn ngắn dọc theo mẫu
+        A, T = T, A
+        tn = len(T)
     t = T - T.mean(0)
     tnorm = np.linalg.norm(t) + 1e-9
     best = 0.0
@@ -140,27 +207,18 @@ class Recorder(threading.Thread):
         self.rate = SR
         self.level = 0.0
         self.seg, self.silence = [], 0
+        self.pre = collections.deque(maxlen=2)  # 0,2 giây trước đoạn có tiếng
         self.test_until = 0.0
         self.retry_at = 0.0
         self.last_alert = {}
         self.templates = []
-        os.makedirs(CLIPS_DIR, exist_ok=True)
-        os.makedirs(SAMPLES_DIR, exist_ok=True)
         self.load_templates()
 
-    # -- mẫu
+    # -- mẫu: nạp sẵn từ thư mục ringtone/, người dùng không phải chọn
     def load_templates(self):
-        self.templates = []
-        for f in sorted(os.listdir(SAMPLES_DIR)):
-            if f.endswith(".wav") and f.split("_")[0] in RAID_TYPES:
-                feat = features(read_wav(os.path.join(SAMPLES_DIR, f)))
-                if len(feat) >= 20:
-                    self.templates.append((f.split("_")[0], feat))
-
-    def make_sample(self, clip_path, label):
-        name = f"{label}_{time.strftime('%Y%m%d_%H%M%S')}.wav"
-        shutil.copy(clip_path, os.path.join(SAMPLES_DIR, name))
-        self.load_templates()
+        self.templates = [("Chuong", f) for f in load_bundled(self.log)]
+        if not self.templates:
+            self.log("Chưa có file chuông trong thư mục ringtone/ – chưa thể cảnh báo.")
 
     # -- vòng lặp
     def wanted(self):
@@ -233,6 +291,8 @@ class Recorder(threading.Thread):
         rms = float(np.sqrt(np.mean(blk ** 2)))
         self.level = rms
         if rms > self.cfg["audio_threshold"]:
+            if not self.seg:
+                self.seg = list(self.pre)
             self.seg.append(blk)
             self.silence = 0
         elif self.seg:
@@ -240,6 +300,8 @@ class Recorder(threading.Thread):
             self.silence += 1
             if self.silence >= 12:  # 1,2 giây im lặng = hết một đoạn
                 self.finish()
+        else:
+            self.pre.append(blk)
         if len(self.seg) > 300:  # tối đa 30 giây / đoạn
             self.finish()
 
@@ -247,15 +309,10 @@ class Recorder(threading.Thread):
         blocks, trail = self.seg, self.silence
         self.seg, self.silence = [], 0
         if trail:
-            blocks = blocks[:-trail]
+            blocks = blocks[:len(blocks) - trail + 2]  # giữ 0,2 giây đuôi
         if len(blocks) < 3:  # ngắn hơn 0,3 giây thì bỏ
             return
-        audio = np.concatenate(blocks)
-        name = time.strftime("%Y%m%d_%H%M%S") + ".wav"
-        write_wav(os.path.join(CLIPS_DIR, name), audio)
-        self.cleanup()
-        self.on_clip()
-        self.check_raid(audio, name)
+        self.check_raid(np.concatenate(blocks), time.strftime("%H:%M:%S"))
 
     def check_raid(self, audio, name):
         if not self.templates:
@@ -271,12 +328,3 @@ class Recorder(threading.Thread):
         if best >= self.cfg["match_threshold"] and time.time() - self.last_alert.get(label, 0) > 60:
             self.last_alert[label] = time.time()
             self.on_raid(label, best)
-
-    def cleanup(self):
-        limit = time.time() - self.cfg["keep_days"] * 86400
-        for p in list_clips():
-            try:
-                if os.path.getmtime(p) < limit:
-                    os.remove(p)
-            except OSError:
-                pass
