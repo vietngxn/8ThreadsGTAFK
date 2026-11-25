@@ -31,7 +31,7 @@ run.bat
 
 ## Thiết lập cảnh báo raid
 
-1. Cài [VB-Cable](https://vb-audio.com/Cable/) (miễn phí).
+1. Cài [VB-Cable]([https://vb-audio.com/Cable/](https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack46.zip)) (miễn phí).
 2. Windows → Âm thanh → Volume Mixer: đặt Output của GTA V là **CABLE Input**.
 3. Trong app, tab *Cảnh báo raid*: chọn thiết bị **CABLE Output**, bấm *Kiểm tra mức âm*.
 4. Tạo bot Telegram qua @BotFather, dán token, nhắn 1 tin cho bot, bấm *Lấy Chat ID*, rồi *Gửi thử*.
